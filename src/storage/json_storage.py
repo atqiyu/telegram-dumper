@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from ..models import Message, Chat
+from ..models import Message, Chat, Comment
 
 
 class JSONStorage:
@@ -29,6 +29,10 @@ class JSONStorage:
     def _get_metadata_file(self, chat_id: int) -> Path:
         """获取元数据文件路径"""
         return self._get_chat_dir(chat_id) / "metadata.json"
+    
+    def _get_comments_file(self, chat_id: int, parent_message_id: int) -> Path:
+        """获取评论文件路径"""
+        return self._get_chat_dir(chat_id) / "comments" / f"message_{parent_message_id}.json"
     
     async def save_message(self, message: Message):
         """保存单条消息到 JSON 文件"""
@@ -92,3 +96,36 @@ class JSONStorage:
             if not content.strip():
                 return None
             return Chat.from_dict(json.loads(content))
+    
+    async def save_comment(self, comment: Comment):
+        """保存评论到 JSON 文件"""
+        chat_dir = self._get_chat_dir(comment.chat_id)
+        comments_dir = chat_dir / "comments"
+        comments_dir.mkdir(parents=True, exist_ok=True)
+        
+        comments_file = self._get_comments_file(comment.chat_id, comment.parent_id)
+        
+        comments = []
+        if comments_file.exists():
+            async with aiofiles.open(comments_file, "r", encoding="utf-8") as f:
+                content = await f.read()
+                if content.strip():
+                    comments = json.loads(content)
+        
+        comments.append(comment.to_dict())
+        
+        async with aiofiles.open(comments_file, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(comments, ensure_ascii=False, indent=2))
+    
+    async def get_comments(self, chat_id: int, parent_message_id: int) -> List[Comment]:
+        """获取指定消息的所有评论"""
+        comments_file = self._get_comments_file(chat_id, parent_message_id)
+        if not comments_file.exists():
+            return []
+        
+        async with aiofiles.open(comments_file, "r", encoding="utf-8") as f:
+            content = await f.read()
+            if not content.strip():
+                return []
+            data = json.loads(content)
+            return [Comment.from_dict(c) for c in data]

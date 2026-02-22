@@ -12,7 +12,7 @@ from telethon import TelegramClient
 from telethon.tl.types import Message, Chat, Channel, User, PeerChannel, PeerChat, PeerUser
 
 from .config import Config
-from .models import Chat as ChatModel, Message as MessageModel
+from .models import Chat as ChatModel, Message as MessageModel, Comment as CommentModel
 
 log = logging.getLogger("TelegramClient")
 
@@ -280,7 +280,12 @@ class TelegramDumperClient:
         views = getattr(message, 'views', None)
         forwards = getattr(message, 'forwards', None)
         
-        # 提取评论信息 (频道)
+        # 提取评论信息 (频道) - replies 属性表示评论数量
+        replies = getattr(message, 'replies', None)
+        if replies and hasattr(replies, 'replies'):
+            replies = replies.replies
+        
+        # 提取评论区信息
         is_discussion = getattr(message, 'is_discussion', False)
         discussion_chat_id = None
         if hasattr(message, 'discussion') and message.discussion:
@@ -307,6 +312,7 @@ class TelegramDumperClient:
             forward_from_name=forward_from_name,
             views=views,
             forwards=forwards,
+            replies=replies,
             is_discussion=is_discussion,
             discussion_chat_id=discussion_chat_id,
             raw_data=self._message_to_dict(message)
@@ -320,3 +326,65 @@ class TelegramDumperClient:
             "text": message.text,
             "message": str(message),
         }
+    
+    async def iter_comments(
+        self,
+        chat: Union[int, str],
+        parent_message_id: int,
+        limit: Optional[int] = None
+    ) -> AsyncGenerator[CommentModel, None]:
+        """
+        获取评论/回复列表
+        
+        参数:
+            chat: 聊天ID或用户名
+            parent_message_id: 父消息ID
+            
+        返回:
+            评论生成器
+        """
+        if not self.client:
+            raise RuntimeError("Client not connected")
+        
+        # 转换聊天ID格式
+        chat = self._convert_chat_id(chat)
+        
+        # 使用 reply_to 参数获取评论
+        async for comment in self.client.iter_messages(
+            chat,
+            limit=limit,
+            reply_to=parent_message_id
+        ):
+            yield self.comment_to_model(comment, chat)
+    
+    def comment_to_model(self, comment: Message, chat_id: int, parent_id: int = 0) -> CommentModel:
+        """将 Telethon Message 转换为评论数据模型"""
+        
+        # 提取发送者信息
+        sender_id = None
+        sender_name = None
+        if hasattr(comment, 'sender_id') and comment.sender_id:
+            sender_id = comment.sender_id
+        if hasattr(comment, 'sender') and comment.sender:
+            sender = comment.sender
+            if hasattr(sender, 'first_name'):
+                sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip()
+                if hasattr(sender, 'username') and sender.username:
+                    sender_name = f"{sender_name} (@{sender.username})"
+        
+        # 提取统计信息
+        views = getattr(comment, 'views', None)
+        
+        return CommentModel(
+            id=comment.id,
+            chat_id=chat_id,
+            parent_id=parent_id,
+            date=comment.date,
+            text=comment.text or "",
+            raw_text=getattr(comment, 'raw_text', "") or "",
+            media_type=self._parse_media_type(comment),
+            sender_id=sender_id,
+            sender_name=sender_name,
+            views=views,
+            raw_data=self._message_to_dict(comment)
+        )

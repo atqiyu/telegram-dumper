@@ -13,7 +13,7 @@ from telethon.tl.types import Message
 
 from .client import TelegramDumperClient
 from .config import Config
-from .models import Message as MessageModel, Chat as ChatModel, DownloadRecord
+from .models import Message as MessageModel, Chat as ChatModel, DownloadRecord, Comment as CommentModel
 from .storage.json_storage import JSONStorage
 from .storage.sqlite_storage import SQLiteStorage
 
@@ -142,6 +142,42 @@ class Downloader:
         
         return None
     
+    async def _download_comments(
+        self,
+        client: TelegramDumperClient,
+        chat_id: int,
+        parent_message_id: int,
+        chat
+    ) -> List[CommentModel]:
+        """
+        获取并保存评论
+        
+        参数:
+            client: Telegram 客户端
+            chat_id: 聊天ID
+            parent_message_id: 父消息ID
+            chat: 聊天对象
+            
+        返回:
+            评论列表
+        """
+        comments = []
+        
+        try:
+            # 使用 reply_to 参数获取评论
+            async for comment in client.iter_comments(chat, parent_message_id):
+                comment.parent_id = parent_message_id
+                comments.append(comment)
+                
+                # 保存到存储
+                await self.json_storage.save_comment(comment)
+                await self.sqlite_storage.save_comment(comment)
+                
+        except Exception as e:
+            log.debug(f"Failed to get comments for message {parent_message_id}: {e}")
+        
+        return comments
+    
     async def download_chat(
         self,
         client: TelegramDumperClient,
@@ -221,6 +257,12 @@ class Downloader:
                 # 保存到存储
                 await self.json_storage.save_message(msg_model)
                 await self.sqlite_storage.save_message(msg_model)
+                
+                # 获取评论 (如果有评论区)
+                comments_downloaded = await self._download_comments(client, chat_id, msg.id, chat)
+                comments_count = len(comments_downloaded) if comments_downloaded else 0
+                if comments_count > 0:
+                    log.debug(f"Downloaded {comments_count} comments for message {msg.id}")
                 
                 messages_downloaded += 1
                 total_processed += 1

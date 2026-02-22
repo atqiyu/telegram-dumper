@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from ..models import Message, Chat, DownloadRecord
+from ..models import Message, Chat, DownloadRecord, Comment
 
 
 class SQLiteStorage:
@@ -57,6 +57,7 @@ class SQLiteStorage:
                     forward_from_name TEXT,
                     views INTEGER,
                     forwards INTEGER,
+                    replies INTEGER,
                     is_discussion INTEGER DEFAULT 0,
                     discussion_chat_id INTEGER,
                     raw_data TEXT DEFAULT '{}'
@@ -86,12 +87,35 @@ class SQLiteStorage:
                     PRIMARY KEY (chat_id, message_id, file_name)
                 )
             """)
+            # 评论表
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS comments (
+                    id INTEGER NOT NULL,
+                    chat_id INTEGER NOT NULL,
+                    parent_id INTEGER NOT NULL,
+                    date TEXT NOT NULL,
+                    text TEXT DEFAULT '',
+                    raw_text TEXT DEFAULT '',
+                    media_type TEXT DEFAULT 'text',
+                    sender_id INTEGER,
+                    sender_name TEXT,
+                    views INTEGER,
+                    raw_data TEXT DEFAULT '{}',
+                    PRIMARY KEY (chat_id, id)
+                )
+            """)
             # 创建索引
             await conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)
             """)
             await conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_download_records_chat_id ON download_records(chat_id)
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_comments_chat_id ON comments(chat_id)
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_comments_parent_id ON comments(parent_id)
             """)
             await conn.commit()
         finally:
@@ -107,8 +131,8 @@ class SQLiteStorage:
                 (id, chat_id, date, text, raw_text, media_type, file_name, file_path, group_id,
                  sender_id, sender_name, is_reply, reply_to_msg_id, is_forward,
                  forward_from_chat_id, forward_from_msg_id, forward_from_name,
-                 views, forwards, is_discussion, discussion_chat_id, raw_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 views, forwards, replies, is_discussion, discussion_chat_id, raw_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 message.id,
                 message.chat_id,
@@ -129,6 +153,7 @@ class SQLiteStorage:
                 message.forward_from_name,
                 message.views,
                 message.forwards,
+                message.replies if hasattr(message, 'replies') else None,
                 int(message.is_discussion),
                 message.discussion_chat_id,
                 json.dumps(message.raw_data, ensure_ascii=False)
@@ -152,8 +177,8 @@ class SQLiteStorage:
                     (id, chat_id, date, text, raw_text, media_type, file_name, file_path, group_id,
                      sender_id, sender_name, is_reply, reply_to_msg_id, is_forward,
                      forward_from_chat_id, forward_from_msg_id, forward_from_name,
-                     views, forwards, is_discussion, discussion_chat_id, raw_data)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     views, forwards, replies, is_discussion, discussion_chat_id, raw_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     message.id,
                     message.chat_id,
@@ -174,6 +199,7 @@ class SQLiteStorage:
                     message.forward_from_name,
                     message.views,
                     message.forwards,
+                    message.replies if hasattr(message, 'replies') else None,
                     int(message.is_discussion),
                     message.discussion_chat_id,
                     json.dumps(message.raw_data, ensure_ascii=False)
@@ -213,6 +239,7 @@ class SQLiteStorage:
                         forward_from_name=row["forward_from_name"],
                         views=row["views"],
                         forwards=row["forwards"],
+                        replies=row["replies"],
                         is_discussion=bool(row["is_discussion"]),
                         discussion_chat_id=row["discussion_chat_id"],
                         raw_data=json.loads(row["raw_data"]) if row["raw_data"] else {}
@@ -323,5 +350,60 @@ class SQLiteStorage:
                 (message_id, chat_id, file_name)
             ) as cursor:
                 return await cursor.fetchone() is not None
+        finally:
+            await conn.close()
+    
+    async def save_comment(self, comment: Comment):
+        """保存评论"""
+        await self.init_db(comment.chat_id)
+        conn = await self._get_connection(comment.chat_id)
+        try:
+            await conn.execute("""
+                INSERT OR REPLACE INTO comments 
+                (id, chat_id, parent_id, date, text, raw_text, media_type, sender_id, sender_name, views, raw_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                comment.id,
+                comment.chat_id,
+                comment.parent_id,
+                comment.date.isoformat() if comment.date else datetime.now().isoformat(),
+                comment.text,
+                comment.raw_text,
+                comment.media_type,
+                comment.sender_id,
+                comment.sender_name,
+                comment.views,
+                json.dumps(comment.raw_data, ensure_ascii=False)
+            ))
+            await conn.commit()
+        finally:
+            await conn.close()
+    
+    async def get_comments(self, chat_id: int, parent_message_id: int) -> List[Comment]:
+        """获取指定消息的所有评论"""
+        await self.init_db(chat_id)
+        conn = await self._get_connection(chat_id)
+        try:
+            async with conn.execute(
+                "SELECT * FROM comments WHERE chat_id = ? AND parent_id = ? ORDER BY id",
+                (chat_id, parent_message_id)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                comments = []
+                for row in rows:
+                    comments.append(Comment(
+                        id=row["id"],
+                        chat_id=row["chat_id"],
+                        parent_id=row["parent_id"],
+                        date=datetime.fromisoformat(row["date"]),
+                        text=row["text"],
+                        raw_text=row["raw_text"] or "",
+                        media_type=row["media_type"],
+                        sender_id=row["sender_id"],
+                        sender_name=row["sender_name"],
+                        views=row["views"],
+                        raw_data=json.loads(row["raw_data"]) if row["raw_data"] else {}
+                    ))
+                return comments
         finally:
             await conn.close()

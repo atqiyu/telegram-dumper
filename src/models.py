@@ -107,3 +107,37 @@ class DownloadRecord:
         if isinstance(data.get("downloaded_at"), str):
             data["downloaded_at"] = datetime.fromisoformat(data["downloaded_at"])
         return cls(**data)
+
+
+@dataclass
+class Comment:
+    """评论数据模型"""
+    id: int                                 # 评论消息ID
+    chat_id: int                            # 聊天ID (评论区所在聊天)
+    parent_id: int                          # 父消息ID (被评论的消息)
+    date: datetime                          # 发送时间
+    text: str = ""                          # 评论文本 (格式化)
+    raw_text: str = ""                      # 原始评论文本 (无格式)
+    media_type: str = "text"                # 媒体类型
+    
+    # 发送者信息
+    sender_id: Optional[int] = None          # 发送者ID
+    sender_name: Optional[str] = None        # 发送者名称
+    
+    # 统计信息
+    views: Optional[int] = None              # 查看数
+    
+    raw_data: Dict[str, Any] = field(default_factory=dict)  # 原始数据
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        data = asdict(self)
+        data["date"] = self.date.isoformat() if self.date else None
+        return data
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Comment":
+        """从字典创建对象"""
+        if isinstance(data.get("date"), str):
+            data["date"] = datetime.fromisoformat(data["date"])
+        return cls(**data)
