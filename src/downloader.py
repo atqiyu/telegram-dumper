@@ -147,16 +147,16 @@ class Downloader:
         client: TelegramDumperClient,
         chat_id: int,
         parent_message_id: int,
-        chat
+        api_chat_id: int
     ) -> List[CommentModel]:
         """
         获取并保存评论
         
         参数:
             client: Telegram 客户端
-            chat_id: 聊天ID
+            chat_id: 存储用的聊天ID (原始ID)
             parent_message_id: 父消息ID
-            chat: 聊天对象
+            api_chat_id: API用的聊天ID (带-100前缀)
             
         返回:
             评论列表
@@ -164,8 +164,10 @@ class Downloader:
         comments = []
         
         try:
-            # 使用 reply_to 参数获取评论
-            async for comment in client.iter_comments(chat, parent_message_id):
+            # 使用 api_chat_id 进行 API 调用
+            async for comment in client.iter_comments(api_chat_id, parent_message_id):
+                # 但保存到存储时使用 chat_id (原始ID)
+                comment.chat_id = chat_id
                 comment.parent_id = parent_message_id
                 comments.append(comment)
                 
@@ -218,9 +220,18 @@ class Downloader:
         
         log.info(f"Starting download for chat: {entity.title} (ID: {chat_id})")
         
+        # 创建用于存储的 Chat 对象，使用正确的存储ID
+        from .models import Chat as ChatModel
+        storage_entity = ChatModel(
+            id=chat_id,
+            title=entity.title,
+            type=entity.type if hasattr(entity, 'type') else 'unknown',
+            username=entity.username if hasattr(entity, 'username') else None
+        )
+        
         # 保存元数据
-        await self.json_storage.save_chat_metadata(entity)
-        await self.sqlite_storage.save_chat(entity)
+        await self.json_storage.save_chat_metadata(storage_entity)
+        await self.sqlite_storage.save_chat(storage_entity)
         
         # 获取已存在的消息ID集合
         existing_ids = await self.sqlite_storage.get_all_message_ids(chat_id)
