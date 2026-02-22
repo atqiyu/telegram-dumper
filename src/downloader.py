@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import Optional, List, Callable, Set
+from typing import Optional, List, Callable, Set, Union
 from datetime import datetime
 
 from telethon.tl.types import Message
@@ -273,6 +273,3 @@ class Downloader:
                 })
         
         return results
-
-
-from typing import Union
