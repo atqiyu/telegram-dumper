@@ -84,7 +84,23 @@ class TelegramDumperClient:
         if not self.client:
             raise RuntimeError("Client not connected")
         
-        entity = await self.client.get_entity(chat)
+        # 处理超级群/频道的 ID 格式
+        # 超级群和频道需要 -100 前缀
+        original_chat = chat
+        if isinstance(chat, str) and chat.lstrip('-').isdigit():
+            # 如果是纯数字字符串，转换为整数
+            chat = int(chat)
+        
+        if isinstance(chat, int) and chat > 0:
+            # 添加 -100 前缀给超级群/频道
+            chat = int(f"-100{chat}")
+        
+        try:
+            entity = await self.client.get_entity(chat)
+        except ValueError:
+            # 如果失败，尝试原始输入
+            entity = await self.client.get_entity(original_chat)
+        
         chat_id = self._get_chat_id(entity)
         chat_type = self._get_chat_type(entity)
         
@@ -118,6 +134,9 @@ class TelegramDumperClient:
         if not self.client:
             raise RuntimeError("Client not connected")
         
+        # 转换超级群/频道 ID
+        chat = self._convert_chat_id(chat)
+        
         async for msg in self.client.iter_messages(
             chat,
             limit=limit,
@@ -138,11 +157,23 @@ class TelegramDumperClient:
         if not self.client:
             raise RuntimeError("Client not connected")
         
+        # 转换超级群/频道 ID
+        chat = self._convert_chat_id(chat)
+        
         return await self.client.get_messages(
             chat,
             limit=limit,
             offset_id=offset_id
         )
+    
+    def _convert_chat_id(self, chat: Union[int, str]) -> int:
+        """转换超级群/频道 ID 格式"""
+        if isinstance(chat, str) and chat.lstrip('-').isdigit():
+            chat = int(chat)
+        
+        if isinstance(chat, int) and chat > 0:
+            return int(f"-100{chat}")
+        return chat
     
     async def download_media(
         self,
