@@ -199,8 +199,22 @@ class Downloader:
         返回:
             下载结果统计字典
         """
+        # 保存原始输入的聊天ID
+        original_chat_input = chat
+        
         entity = await client.get_entity(chat)
-        chat_id = entity.id
+        
+        # 获取实体后，从实体获取正确的ID (可能有 -100 前缀)
+        entity_chat_id = entity.id
+        
+        # 如果输入的是正数ID，转换为带 -100 前缀的格式用于API调用
+        # 但保存到本地时使用原始ID (不带 -100 前缀)
+        if isinstance(chat, int) and chat > 0:
+            # 用户输入的是原始ID (如 3347926724)
+            # API 需要 -1003347926724，但本地存储用 3347926724
+            chat_id = chat  # 使用原始ID作为存储ID
+        else:
+            chat_id = entity_chat_id
         
         log.info(f"Starting download for chat: {entity.title} (ID: {chat_id})")
         
@@ -231,7 +245,9 @@ class Downloader:
                     break
                 current_batch_size = min(batch_size, remaining)
             
-            messages = await client.get_messages(chat, limit=current_batch_size, offset_id=offset_id)
+            # 使用 entity_chat_id (带 -100 前缀) 进行 API 调用
+            api_chat_id = entity_chat_id if entity_chat_id != chat_id else original_chat_input
+            messages = await client.get_messages(api_chat_id, limit=current_batch_size, offset_id=offset_id)
             
             if not messages:
                 break
@@ -259,7 +275,7 @@ class Downloader:
                 await self.sqlite_storage.save_message(msg_model)
                 
                 # 获取评论 (如果有评论区)
-                comments_downloaded = await self._download_comments(client, chat_id, msg.id, chat)
+                comments_downloaded = await self._download_comments(client, chat_id, msg.id, api_chat_id)
                 comments_count = len(comments_downloaded) if comments_downloaded else 0
                 if comments_count > 0:
                     log.debug(f"Downloaded {comments_count} comments for message {msg.id}")
