@@ -33,13 +33,13 @@ def setup_logging(verbose: bool = False):
 
 async def run_download(args):
     """执行下载命令"""
-    # 加载配置 (优先 config.yaml，其次环境变量)
-    config = load_env_config()
-    
     if args.config:
         config = Config.load_from_file(args.config)
+    else:
+        config = load_env_config()
+        if config.api_id == 0:
+            config = Config.load_from_file("config.yaml")
     
-    # 检查必要配置
     if config.api_id == 0 or not config.api_hash:
         print("Error: API_ID and API_HASH must be set via config file or environment variables")
         print("Set TG_API_ID and TG_API_HASH environment variables, or create config.yaml")
