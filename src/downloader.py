@@ -187,7 +187,15 @@ class Downloader:
         
         # 分批获取消息
         while True:
-            messages = await client.get_messages(chat, limit=batch_size, offset_id=offset_id)
+            # 计算本次请求的数量，不超过剩余限额
+            current_batch_size = batch_size
+            if limit:
+                remaining = limit - total_processed
+                if remaining <= 0:
+                    break
+                current_batch_size = min(batch_size, remaining)
+            
+            messages = await client.get_messages(chat, limit=current_batch_size, offset_id=offset_id)
             
             if not messages:
                 break

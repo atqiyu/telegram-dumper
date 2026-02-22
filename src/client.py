@@ -239,14 +239,76 @@ class TelegramDumperClient:
     
     def message_to_model(self, message: Message, chat_id: int) -> MessageModel:
         """将 Telethon Message 转换为数据模型"""
+        
+        # 提取发送者信息
+        sender_id = None
+        sender_name = None
+        if hasattr(message, 'sender_id') and message.sender_id:
+            sender_id = message.sender_id
+        if hasattr(message, 'sender') and message.sender:
+            sender = message.sender
+            if hasattr(sender, 'first_name'):
+                sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip()
+                if hasattr(sender, 'username') and sender.username:
+                    sender_name = f"{sender_name} (@{sender.username})"
+        
+        # 提取回复信息
+        is_reply = hasattr(message, 'is_reply') and message.is_reply
+        reply_to_msg_id = None
+        if is_reply and hasattr(message, 'reply_to') and message.reply_to:
+            reply_to_msg_id = getattr(message.reply_to, 'reply_to_msg_id', None)
+        
+        # 提取转发信息
+        is_forward = hasattr(message, 'forward') and message.forward is not None
+        forward_from_chat_id = None
+        forward_from_msg_id = None
+        forward_from_name = None
+        if is_forward and message.forward:
+            forward_obj = message.forward
+            if hasattr(forward_obj, 'chat'):
+                forward_from_chat_id = getattr(forward_obj.chat, 'id', None)
+                forward_from_name = getattr(forward_obj.chat, 'title', None)
+            elif hasattr(forward_obj, 'from') or hasattr(forward_obj, 'from_name'):
+                # 'from' 是关键字，需要用其他方式访问
+                forward_from_name = getattr(forward_obj, 'from_name', None) or getattr(forward_obj, 'from', None)
+                if forward_from_name and hasattr(forward_from_name, 'name'):
+                    forward_from_name = forward_from_name.name
+            if hasattr(forward_obj, 'msg_id'):
+                forward_from_msg_id = forward_obj.msg_id
+        
+        # 提取统计信息
+        views = getattr(message, 'views', None)
+        forwards = getattr(message, 'forwards', None)
+        
+        # 提取评论信息 (频道)
+        is_discussion = getattr(message, 'is_discussion', False)
+        discussion_chat_id = None
+        if hasattr(message, 'discussion') and message.discussion:
+            discussion_chat_id = getattr(message.discussion, 'chat', None)
+            if discussion_chat_id:
+                discussion_chat_id = getattr(discussion_chat_id, 'id', None)
+        
         return MessageModel(
             id=message.id,
             chat_id=chat_id,
             date=message.date,
             text=message.text or "",
+            raw_text=getattr(message, 'raw_text', "") or "",
             media_type=self._parse_media_type(message),
             file_name=self._extract_file_name(message),
             group_id=message.grouped_id,
+            sender_id=sender_id,
+            sender_name=sender_name,
+            is_reply=is_reply,
+            reply_to_msg_id=reply_to_msg_id,
+            is_forward=is_forward,
+            forward_from_chat_id=forward_from_chat_id,
+            forward_from_msg_id=forward_from_msg_id,
+            forward_from_name=forward_from_name,
+            views=views,
+            forwards=forwards,
+            is_discussion=is_discussion,
+            discussion_chat_id=discussion_chat_id,
             raw_data=self._message_to_dict(message)
         )
     

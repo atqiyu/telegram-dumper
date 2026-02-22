@@ -35,17 +35,30 @@ class SQLiteStorage:
         """初始化数据库表结构"""
         conn = await self._get_connection(chat_id)
         try:
-            # 消息表
+            # 消息表 (增强版)
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY,
                     chat_id INTEGER NOT NULL,
                     date TEXT NOT NULL,
                     text TEXT DEFAULT '',
+                    raw_text TEXT DEFAULT '',
                     media_type TEXT DEFAULT 'text',
                     file_name TEXT,
                     file_path TEXT,
                     group_id INTEGER,
+                    sender_id INTEGER,
+                    sender_name TEXT,
+                    is_reply INTEGER DEFAULT 0,
+                    reply_to_msg_id INTEGER,
+                    is_forward INTEGER DEFAULT 0,
+                    forward_from_chat_id INTEGER,
+                    forward_from_msg_id INTEGER,
+                    forward_from_name TEXT,
+                    views INTEGER,
+                    forwards INTEGER,
+                    is_discussion INTEGER DEFAULT 0,
+                    discussion_chat_id INTEGER,
                     raw_data TEXT DEFAULT '{}'
                 )
             """)
@@ -91,17 +104,33 @@ class SQLiteStorage:
         try:
             await conn.execute("""
                 INSERT OR REPLACE INTO messages 
-                (id, chat_id, date, text, media_type, file_name, file_path, group_id, raw_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, chat_id, date, text, raw_text, media_type, file_name, file_path, group_id,
+                 sender_id, sender_name, is_reply, reply_to_msg_id, is_forward,
+                 forward_from_chat_id, forward_from_msg_id, forward_from_name,
+                 views, forwards, is_discussion, discussion_chat_id, raw_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 message.id,
                 message.chat_id,
                 message.date.isoformat() if message.date else datetime.now().isoformat(),
                 message.text,
+                message.raw_text,
                 message.media_type,
                 message.file_name,
                 message.file_path,
                 message.group_id,
+                message.sender_id,
+                message.sender_name,
+                int(message.is_reply),
+                message.reply_to_msg_id,
+                int(message.is_forward),
+                message.forward_from_chat_id,
+                message.forward_from_msg_id,
+                message.forward_from_name,
+                message.views,
+                message.forwards,
+                int(message.is_discussion),
+                message.discussion_chat_id,
                 json.dumps(message.raw_data, ensure_ascii=False)
             ))
             await conn.commit()
@@ -120,17 +149,33 @@ class SQLiteStorage:
             for message in messages:
                 await conn.execute("""
                     INSERT OR REPLACE INTO messages 
-                    (id, chat_id, date, text, media_type, file_name, file_path, group_id, raw_data)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, chat_id, date, text, raw_text, media_type, file_name, file_path, group_id,
+                     sender_id, sender_name, is_reply, reply_to_msg_id, is_forward,
+                     forward_from_chat_id, forward_from_msg_id, forward_from_name,
+                     views, forwards, is_discussion, discussion_chat_id, raw_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     message.id,
                     message.chat_id,
                     message.date.isoformat() if message.date else datetime.now().isoformat(),
                     message.text,
+                    message.raw_text,
                     message.media_type,
                     message.file_name,
                     message.file_path,
                     message.group_id,
+                    message.sender_id,
+                    message.sender_name,
+                    int(message.is_reply),
+                    message.reply_to_msg_id,
+                    int(message.is_forward),
+                    message.forward_from_chat_id,
+                    message.forward_from_msg_id,
+                    message.forward_from_name,
+                    message.views,
+                    message.forwards,
+                    int(message.is_discussion),
+                    message.discussion_chat_id,
                     json.dumps(message.raw_data, ensure_ascii=False)
                 ))
             await conn.commit()
@@ -153,10 +198,23 @@ class SQLiteStorage:
                         chat_id=row["chat_id"],
                         date=datetime.fromisoformat(row["date"]),
                         text=row["text"],
+                        raw_text=row["raw_text"] or "",
                         media_type=row["media_type"],
                         file_name=row["file_name"],
                         file_path=row["file_path"],
                         group_id=row["group_id"],
+                        sender_id=row["sender_id"],
+                        sender_name=row["sender_name"],
+                        is_reply=bool(row["is_reply"]),
+                        reply_to_msg_id=row["reply_to_msg_id"],
+                        is_forward=bool(row["is_forward"]),
+                        forward_from_chat_id=row["forward_from_chat_id"],
+                        forward_from_msg_id=row["forward_from_msg_id"],
+                        forward_from_name=row["forward_from_name"],
+                        views=row["views"],
+                        forwards=row["forwards"],
+                        is_discussion=bool(row["is_discussion"]),
+                        discussion_chat_id=row["discussion_chat_id"],
                         raw_data=json.loads(row["raw_data"]) if row["raw_data"] else {}
                     ))
                 return messages
