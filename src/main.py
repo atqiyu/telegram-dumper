@@ -9,6 +9,11 @@ import os
 import sys
 from pathlib import Path
 
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = None
+
 from .config import Config, load_env_config
 from .client import TelegramDumperClient
 from .downloader import Downloader
@@ -16,10 +21,10 @@ from .downloader import Downloader
 
 def setup_logging(verbose: bool = False):
     """设置日志级别"""
-    level = logging.DEBUG if verbose else logging.INFO
+    level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(
         level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        format="%(levelname)s: %(message)s" if not verbose else "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
             logging.StreamHandler(sys.stdout)
         ]
@@ -44,27 +49,49 @@ async def run_download(args):
     
     output_dir = args.output or config.output_dir
     
+    print(f"📥 Starting download for chat: {args.chat}")
+    print(f"   Output directory: {output_dir}")
+    if args.limit:
+        print(f"   Message limit: {args.limit}")
+    print("-" * 50)
+    
     async with TelegramDumperClient(config) as client:
         downloader = Downloader(config, output_dir)
         
+        # 进度条
+        pbar = None
+        if tqdm and not args.quiet:
+            pbar = tqdm(total=args.limit if args.limit else 0, 
+                       unit="msg", 
+                       desc="Downloading",
+                       ncols=80,
+                       bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
+        
         def progress_callback(current, message_id):
-            """进度回调函数"""
-            print(f"\rProcessed {current} messages (last ID: {message_id})", end="", flush=True)
+            if pbar:
+                if pbar.total == 0:
+                    pbar.total = current + 100
+                pbar.update(1)
+                pbar.set_postfix_str(f"ID: {message_id}")
+            elif not args.quiet:
+                print(f"\r  Processed: {current} messages (last ID: {message_id})", end="", flush=True)
         
         result = await downloader.download_chat(
             client,
             args.chat,
             limit=args.limit,
             skip_media=args.skip_media,
-            progress_callback=progress_callback if not args.quiet else None
+            progress_callback=progress_callback
         )
         
-        print("\n")
-        print("=" * 50)
-        print(f"Download completed!")
-        print(f"Chat: {result['chat_title']}")
-        print(f"Messages downloaded: {result['messages_downloaded']}")
-        print(f"Messages skipped: {result['messages_skipped']}")
+        if pbar:
+            pbar.close()
+        
+        print("\n" + "=" * 50)
+        print(f"✅ Download completed!")
+        print(f"   Chat: {result['chat_title']}")
+        print(f"   Messages: {result['messages_downloaded']} downloaded, {result['messages_skipped']} skipped")
+        print(f"   Media: {result['media_downloaded']} files")
         print("=" * 50)
 
 
@@ -82,20 +109,37 @@ async def run_list_chats(args):
     setup_logging(args.verbose)
     
     async with TelegramDumperClient(config) as client:
-        print("Fetching dialogs...")
+        print("📋 Available chats:")
+        print("-" * 50)
         async for dialog in client.client.iter_dialogs():
             entity = dialog.entity
             chat_id = client._get_chat_id(entity)
             chat_type = client._get_chat_type(entity)
             title = getattr(entity, 'title', '') or f"{entity.first_name} {entity.last_name or ''}"
             
-            print(f"[{chat_type}] {title} (ID: {chat_id})")
+            type_emoji = {
+                "channel": "📢",
+                "supergroup": "👥",
+                "group": "💬",
+                "private": "👤"
+            }.get(chat_type, "❓")
+            
+            print(f"  {type_emoji} [{chat_type}] {title} (ID: {chat_id})")
+        print("-" * 50)
 
 
 def main():
     """主函数 - 命令行入口"""
     parser = argparse.ArgumentParser(
-        description="Telegram Message Dumper - Download messages and media from Telegram"
+        description="Telegram Message Dumper - Download messages and media from Telegram",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s download 3347926724                    Download all messages
+  %(prog)s download 3347926724 -l 1000           Download 1000 messages
+  %(prog)s download 3347926724 --skip-media       Text only
+  %(prog)s list                                   List available chats
+        """
     )
     parser.add_argument("-c", "--config", help="Path to config file")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")

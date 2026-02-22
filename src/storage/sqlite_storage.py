@@ -59,8 +59,7 @@ class SQLiteStorage:
                     forwards INTEGER,
                     replies INTEGER,
                     is_discussion INTEGER DEFAULT 0,
-                    discussion_chat_id INTEGER,
-                    raw_data TEXT DEFAULT '{}'
+                    discussion_chat_id INTEGER
                 )
             """)
             # 聊天表
@@ -100,7 +99,6 @@ class SQLiteStorage:
                     sender_id INTEGER,
                     sender_name TEXT,
                     views INTEGER,
-                    raw_data TEXT DEFAULT '{}',
                     PRIMARY KEY (chat_id, id)
                 )
             """)
@@ -131,8 +129,8 @@ class SQLiteStorage:
                 (id, chat_id, date, text, raw_text, media_type, file_name, file_path, group_id,
                  sender_id, sender_name, is_reply, reply_to_msg_id, is_forward,
                  forward_from_chat_id, forward_from_msg_id, forward_from_name,
-                 views, forwards, replies, is_discussion, discussion_chat_id, raw_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 views, forwards, replies, is_discussion, discussion_chat_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 message.id,
                 message.chat_id,
@@ -155,8 +153,7 @@ class SQLiteStorage:
                 message.forwards,
                 message.replies if hasattr(message, 'replies') else None,
                 int(message.is_discussion),
-                message.discussion_chat_id,
-                json.dumps(message.raw_data, ensure_ascii=False)
+                message.discussion_chat_id
             ))
             await conn.commit()
         finally:
@@ -177,8 +174,8 @@ class SQLiteStorage:
                     (id, chat_id, date, text, raw_text, media_type, file_name, file_path, group_id,
                      sender_id, sender_name, is_reply, reply_to_msg_id, is_forward,
                      forward_from_chat_id, forward_from_msg_id, forward_from_name,
-                     views, forwards, replies, is_discussion, discussion_chat_id, raw_data)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     views, forwards, replies, is_discussion, discussion_chat_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     message.id,
                     message.chat_id,
@@ -201,8 +198,7 @@ class SQLiteStorage:
                     message.forwards,
                     message.replies if hasattr(message, 'replies') else None,
                     int(message.is_discussion),
-                    message.discussion_chat_id,
-                    json.dumps(message.raw_data, ensure_ascii=False)
+                    message.discussion_chat_id
                 ))
             await conn.commit()
         finally:
@@ -241,8 +237,7 @@ class SQLiteStorage:
                         forwards=row["forwards"],
                         replies=row["replies"],
                         is_discussion=bool(row["is_discussion"]),
-                        discussion_chat_id=row["discussion_chat_id"],
-                        raw_data=json.loads(row["raw_data"]) if row["raw_data"] else {}
+                        discussion_chat_id=row["discussion_chat_id"]
                     ))
                 return messages
         finally:
@@ -360,8 +355,8 @@ class SQLiteStorage:
         try:
             await conn.execute("""
                 INSERT OR REPLACE INTO comments 
-                (id, chat_id, parent_id, date, text, raw_text, media_type, sender_id, sender_name, views, raw_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, chat_id, parent_id, date, text, raw_text, media_type, sender_id, sender_name, views)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 comment.id,
                 comment.chat_id,
@@ -372,8 +367,7 @@ class SQLiteStorage:
                 comment.media_type,
                 comment.sender_id,
                 comment.sender_name,
-                comment.views,
-                json.dumps(comment.raw_data, ensure_ascii=False)
+                comment.views
             ))
             await conn.commit()
         finally:
@@ -401,8 +395,7 @@ class SQLiteStorage:
                         media_type=row["media_type"],
                         sender_id=row["sender_id"],
                         sender_name=row["sender_name"],
-                        views=row["views"],
-                        raw_data=json.loads(row["raw_data"]) if row["raw_data"] else {}
+                        views=row["views"]
                     ))
                 return comments
         finally:

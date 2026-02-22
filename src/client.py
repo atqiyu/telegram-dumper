@@ -314,18 +314,8 @@ class TelegramDumperClient:
             forwards=forwards,
             replies=replies,
             is_discussion=is_discussion,
-            discussion_chat_id=discussion_chat_id,
-            raw_data=self._message_to_dict(message)
+            discussion_chat_id=discussion_chat_id
         )
-    
-    def _message_to_dict(self, message: Message) -> dict:
-        """将 Message 转换为字典"""
-        return {
-            "id": message.id,
-            "date": message.date.isoformat() if message.date else None,
-            "text": message.text,
-            "message": str(message),
-        }
     
     async def iter_comments(
         self,
@@ -385,6 +375,5 @@ class TelegramDumperClient:
             media_type=self._parse_media_type(comment),
             sender_id=sender_id,
             sender_name=sender_name,
-            views=views,
-            raw_data=self._message_to_dict(comment)
+            views=views
         )

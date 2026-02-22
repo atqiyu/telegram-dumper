@@ -3,9 +3,24 @@
 定义消息、聊天和下载记录的数据类
 """
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Any, Dict, List
 import json
+
+
+# 东八区时区
+UTC_PLUS_8 = timezone(timedelta(hours=8))
+
+
+def to_local_time(dt: datetime) -> datetime:
+    """将 UTC 时间转换为东八区时间"""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        # 如果是 naive datetime，假定为 UTC
+        dt = dt.replace(tzinfo=timezone.utc)
+    # 转换为东八区
+    return dt.astimezone(UTC_PLUS_8)
 
 
 @dataclass
@@ -44,12 +59,15 @@ class Message:
     is_discussion: bool = False               # 是否有评论区
     discussion_chat_id: Optional[int] = None  # 评论区聊天ID
     
-    raw_data: Dict[str, Any] = field(default_factory=dict)  # 原始数据
-    
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         data = asdict(self)
-        data["date"] = self.date.isoformat() if self.date else None
+        # 将 UTC 时间转换为东八区时间
+        if self.date:
+            local_date = to_local_time(self.date)
+            data["date"] = local_date.isoformat()
+        else:
+            data["date"] = None
         return data
     
     @classmethod
@@ -74,7 +92,12 @@ class Chat:
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         data = asdict(self)
-        data["created_at"] = self.created_at.isoformat()
+        # 将 UTC 时间转换为东八区时间
+        if self.created_at:
+            local_created_at = to_local_time(self.created_at)
+            data["created_at"] = local_created_at.isoformat()
+        else:
+            data["created_at"] = None
         return data
     
     @classmethod
@@ -98,7 +121,12 @@ class DownloadRecord:
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         data = asdict(self)
-        data["downloaded_at"] = self.downloaded_at.isoformat()
+        # 将 UTC 时间转换为东八区时间
+        if self.downloaded_at:
+            local_downloaded_at = to_local_time(self.downloaded_at)
+            data["downloaded_at"] = local_downloaded_at.isoformat()
+        else:
+            data["downloaded_at"] = None
         return data
     
     @classmethod
@@ -127,12 +155,15 @@ class Comment:
     # 统计信息
     views: Optional[int] = None              # 查看数
     
-    raw_data: Dict[str, Any] = field(default_factory=dict)  # 原始数据
-    
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         data = asdict(self)
-        data["date"] = self.date.isoformat() if self.date else None
+        # 将 UTC 时间转换为东八区时间
+        if self.date:
+            local_date = to_local_time(self.date)
+            data["date"] = local_date.isoformat()
+        else:
+            data["date"] = None
         return data
     
     @classmethod
