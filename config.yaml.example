@@ -1,0 +1,6 @@
+api_id: 123456
+api_hash: "your_api_hash_here"
+session_name: "telegram_dumper"
+output_dir: "output"
+download_concurrency: 8
+progress_update_interval: 0.5
