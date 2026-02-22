@@ -9,7 +9,8 @@
 5. [命令详解](#命令详解)
 6. [输出说明](#输出说明)
 7. [增量下载](#增量下载)
-8. [常见问题](#常见问题)
+8. [数据字段说明](#数据字段说明)
+9. [常见问题](#常见问题)
 
 ---
 
@@ -24,6 +25,9 @@ Telegram Dumper 是一款用于下载 Telegram 群组/频道消息和媒体的�
 - 支持增量下载（断点续传）
 - 双格式存储（JSON + SQLite）
 - 使用 FastTelethon 实现并发下载，速度更快
+- 支持获取评论/回复内容
+- 自动转换时区（UTC+8 东八区）
+- 进度条显示
 
 ---
 
@@ -39,7 +43,7 @@ Telegram Dumper 是一款用于下载 Telegram 群组/频道消息和媒体的�
 ### 1. 克隆项目
 
 ```bash
-git clone <项目地址>
+git clone https://github.com/atqiyu/telegram-dumper.git
 cd telegram-dumper
 ```
 
@@ -47,12 +51,6 @@ cd telegram-dumper
 
 ```bash
 pip install -r requirements.txt
-```
-
-或使用 pipx（推荐）：
-
-```bash
-pipx install -r requirements.txt
 ```
 
 ### 3. 配置 API
@@ -73,7 +71,6 @@ api_hash: "你的API_HASH"
 session_name: "telegram_dumper"
 output_dir: "output"
 download_concurrency: 8
-progress_update_interval: 0.5
 ```
 
 #### 方式二：使用环境变量
@@ -97,10 +94,12 @@ python -m src -c config.yaml list
 输出示例：
 
 ```
-Fetching dialogs...
-[private] 用户A (ID: 123456789)
-[channel] 测试频道 (ID: -1001234567890)
-[supergroup] 测试群组 (ID: -1009876543210)
+📋 Available chats:
+--------------------------------------------------
+  👥 [supergroup] 测试群组 (ID: 3347926724)
+  📢 [channel] 测试频道 (ID: 2546071409)
+  👤 [private] 用户A (ID: 123456789)
+--------------------------------------------------
 ```
 
 ### 2. 下载消息
@@ -112,17 +111,17 @@ python -m src -c config.yaml download <chat_id或username>
 示例：
 
 ```bash
-# 按 ID 下载
-python -m src -c config.yaml download -1001234567890
+# 按 ID 下载（推荐使用原始 ID，如 3347926724）
+python -m src -c config.yaml download 3347926724
 
 # 按用户名下载
 python -m src -c config.yaml download test_channel
 
 # 限制下载数量
-python -m src -c config.yaml download -1001234567890 -l 1000
+python -m src -c config.yaml download 3347926724 -l 1000
 
 # 跳过媒体下载（只下载文本）
-python -m src -c config.yaml download -1001234567890 --skip-media
+python -m src -c config.yaml download 3347926724 --skip-media
 ```
 
 ---
@@ -131,7 +130,7 @@ python -m src -c config.yaml download -1001234567890 --skip-media
 
 ### 下载命令 (download)
 
-```
+```bash
 python -m src download <chat> [options]
 ```
 
@@ -144,13 +143,13 @@ python -m src download <chat> [options]
 | `-o, --output` | 输出目录（默认：config.yaml 中的 output_dir） |
 | `-l, --limit` | 最大下载消息数（默认：全部） |
 | `--skip-media` | 跳过媒体下载（只下载文本） |
-| `-q, --quiet` | 安静模式（不显示进度） |
+| `-q, --quiet` | 安静模式（不显示进度条） |
 | `-c, --config` | 配置文件路径 |
 | `-v, --verbose` | 详细输出模式 |
 
 ### 列出聊天命令 (list)
 
-```
+```bash
 python -m src list [options]
 ```
 
@@ -199,6 +198,7 @@ output/
 | `messages` | 消息数据 |
 | `chats` | 聊天信息 |
 | `download_records` | 下载记录 |
+| `comments` | 评论数据 |
 
 ---
 
@@ -218,8 +218,54 @@ output/
 下载中断后，直接重新运行相同命令即可继续：
 
 ```bash
-python -m src -c config.yaml download -1001234567890
+python -m src -c config.yaml download 3347926724
 ```
+
+---
+
+## 数据字段说明
+
+### 消息表 (messages)
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 消息ID |
+| `chat_id` | 聊天ID |
+| `date` | 发送时间（UTC+8 东八区） |
+| `text` | 消息文本（格式化） |
+| `raw_text` | 原始消息文本（无格式） |
+| `media_type` | 媒体类型 (text/photo/video/audio/document) |
+| `file_name` | 文件名 |
+| `file_path` | 本地文件路径 |
+| `group_id` | 媒体组ID |
+| `sender_id` | 发送者ID |
+| `sender_name` | 发送者名称 |
+| `is_reply` | 是否为回复 |
+| `reply_to_msg_id` | 回复的消息ID |
+| `is_forward` | 是否为转发 |
+| `forward_from_chat_id` | 转发来源聊天ID |
+| `forward_from_msg_id` | 转发来源消息ID |
+| `forward_from_name` | 转发来源名称 |
+| `views` | 查看数 |
+| `forwards` | 转发数 |
+| `replies` | 评论数 |
+| `is_discussion` | 是否有评论区 |
+| `discussion_chat_id` | 评论区聊天ID |
+
+### 评论表 (comments)
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 评论ID |
+| `chat_id` | 聊天ID |
+| `parent_id` | 父消息ID |
+| `date` | 发送时间（UTC+8 东八区） |
+| `text` | 评论文本 |
+| `raw_text` | 原始评论文本 |
+| `media_type` | 媒体类型 |
+| `sender_id` | 发送者ID |
+| `sender_name` | 发送者名称 |
+| `views` | 查看数 |
 
 ---
 
@@ -235,7 +281,7 @@ python -m src -c config.yaml download -1001234567890
 
 ### Q3: 下载速度慢
 
-项目已on 并发下载集成 FastTeleth，默认 8 并发。如需调整，可修改 `config.yaml` 中的 `download_concurrency` 参数。
+项目已集成 FastTelethon 并发下载，默认 8 并发。如需调整，可修改 `config.yaml` 中的 `download_concurrency` 参数。
 
 ### Q4: 如何只下载文本不下载媒体
 
@@ -251,8 +297,14 @@ python -m src -c config.yaml download <chat> --skip-media
 python -m src -c config.yaml list
 ```
 
+### Q6: 输入的 Chat ID 格式
+
+推荐使用原始数字 ID（如 `3347926724`），程序会自动处理 Telegram 所需的格式转换。
+
 ---
 
 ## 技术支持
 
 如有问题，请提交 Issue 或查看项目文档。
+
+GitHub: https://github.com/atqiyu/telegram-dumper
