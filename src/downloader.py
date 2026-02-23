@@ -264,9 +264,15 @@ class Downloader:
         await self.json_storage.save_chat_metadata(storage_entity)
         await self.sqlite_storage.save_chat(storage_entity)
         
-        # 获取已存在的消息ID集合
+        # 获取已存在的消息ID集合（使用 set 提高查找效率）
         existing_ids = await self.sqlite_storage.get_all_message_ids(chat_id)
         log.info(f"Found {len(existing_ids)} existing messages in database")
+        
+        # 批量预加载所有消息的下载状态（避免每条消息都查询数据库）
+        message_statuses = {}
+        if existing_ids:
+            message_statuses = await self.sqlite_storage.get_all_message_statuses(chat_id)
+            log.info(f"Loaded download statuses for {len(message_statuses)} messages")
         
         messages_downloaded = 0
         media_downloaded = 0
@@ -282,18 +288,15 @@ class Downloader:
             """判断消息是否为 group 消息的一部分"""
             return hasattr(msg, 'grouped_id') and msg.grouped_id is not None
         
-        async def _process_single_message(msg) -> bool:
+        def _is_message_complete(msg_id: int) -> bool:
             """
-            处理单条消息
-            返回 True 表示消息处理完成（下载或跳过），False 表示需要下载
+            使用预加载的状态检查消息是否完全下载完成
             """
-            # 增量下载检查: 使用新的状态检查方法
-            if msg.id in existing_ids:
-                # 检查消息是否完全下载完成
-                is_complete = await self.sqlite_storage.is_message_download_complete(msg.id, chat_id)
-                if is_complete:
-                    return True  # 跳过已下载的消息
-            return False
+            if msg_id not in existing_ids:
+                return False
+            status = message_statuses.get(msg_id)
+            # download_status 为 'completed' 或 None（旧数据）都视为已完成
+            return status == "completed" or status is None
         
         async def _process_message_group(messages_batch) -> int:
             """
@@ -324,17 +327,10 @@ class Downloader:
                         group_msgs.append(messages_batch[idx])
                         idx += 1
                     
-                    # 检查 group 中的每条消息是否都已完全下载
+                    # 使用预加载的状态检查 group 是否已完全下载
                     group_all_complete = True
                     for gm in group_msgs:
-                        if gm.id in existing_ids:
-                            # 消息存在于数据库，检查状态
-                            is_complete = await self.sqlite_storage.is_message_download_complete(gm.id, chat_id)
-                            if not is_complete:
-                                group_all_complete = False
-                                break
-                        else:
-                            # 消息不存在于数据库，需要下载
+                        if not _is_message_complete(gm.id):
                             group_all_complete = False
                             break
                     
@@ -350,10 +346,8 @@ class Downloader:
                     
                     processed_count += len(group_msgs)
                 else:
-                    # 普通消息
-                    need_download = await _process_single_message(msg)
-                    
-                    if need_download:
+                    # 普通消息：使用预加载的状态检查
+                    if _is_message_complete(msg.id):
                         messages_skipped += 1
                         log.debug(f"Skipping message {msg.id} (already downloaded)")
                     else:

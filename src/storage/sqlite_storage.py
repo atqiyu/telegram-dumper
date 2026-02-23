@@ -276,7 +276,7 @@ class SQLiteStorage:
         检查消息是否完全下载完成
         返回 True 当且仅当：
         1. 消息存在于数据库
-        2. download_status = 'completed'
+        2. download_status = 'completed' 或 download_status IS NULL（旧数据兼容）
         """
         await self.init_db(chat_id)
         conn = await self._get_connection(chat_id)
@@ -289,7 +289,8 @@ class SQLiteStorage:
                 if row is None:
                     return False
                 status = row["download_status"]
-                return status == "completed"
+                # NULL 也视为已完成（兼容旧数据）
+                return status == "completed" or status is None
         finally:
             await conn.close()
     
@@ -319,6 +320,22 @@ class SQLiteStorage:
             ) as cursor:
                 rows = await cursor.fetchall()
                 return {row["id"] for row in rows}
+        finally:
+            await conn.close()
+    
+    async def get_all_message_statuses(self, chat_id: int) -> dict:
+        """
+        批量获取所有消息的下载状态
+        返回: {message_id: download_status}
+        """
+        await self.init_db(chat_id)
+        conn = await self._get_connection(chat_id)
+        try:
+            async with conn.execute(
+                "SELECT id, download_status FROM messages WHERE chat_id = ?", (chat_id,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return {row["id"]: row["download_status"] for row in rows}
         finally:
             await conn.close()
     

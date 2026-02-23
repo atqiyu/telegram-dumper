@@ -321,12 +321,23 @@ class ParallelTransferrer:
                 tasks.append(self.loop.create_task(sender.next()))
             
             try:
-                for task in tasks:
-                    data = await task
-                    if not data:
-                        break
-                    yield data
-                    part += 1
+                for i, task in enumerate(tasks):
+                    try:
+                        data = await task
+                        if not data:
+                            # 如果没有数据，停止所有其他任务
+                            for j, other_task in enumerate(tasks):
+                                if j != i and not other_task.done():
+                                    other_task.cancel()
+                            break
+                        yield data
+                        part += 1
+                    except asyncio.CancelledError:
+                        # 当前任务被取消，传播给所有其他任务
+                        for other_task in tasks:
+                            if not other_task.done():
+                                other_task.cancel()
+                        raise
             except (GeneratorExit, Exception):
                 # 遇到任何错误（包括外部取消），立即取消当前正在运行的所有任务
                 for task in tasks:
@@ -400,6 +411,8 @@ async def download_file(
     file_size: int = None,
     progress_callback: callable = None,
     dc_id: int = None,
+    retry_count: int = 0,
+    max_retries: int = 3,
 ) -> BinaryIO:
     if file_size is None:
         if hasattr(location, 'size'):
@@ -435,7 +448,7 @@ async def download_file(
                         pass
                         
     except errors.FileMigrateError as e:
-        log.info(f"DC Mismatch: File is at DC {e.new_dc}, current {dc_id}. Redirecting...")
+        log.info(f"DC Mismatch: File is at DC {e.new_dc}, current {dc_id}. Redirecting... (retry {retry_count + 1}/{max_retries})")
         
         # 【关键修复】在递归之前，必须确保旧的 downloader 已经彻底清理连接
         if downloader:
@@ -447,14 +460,21 @@ async def download_file(
             if callable(getattr(out, 'truncate', None)):
                 out.truncate()
         
-        # 递归调用，传入新的 DC ID
+        # 检查重试次数
+        if retry_count >= max_retries:
+            log.error(f"Max retries ({max_retries}) reached for DC migration")
+            raise
+        
+        # 递归调用，传入新的 DC ID，增加重试计数
         return await download_file(
             client, 
             location, 
             out, 
             file_size=file_size, 
             progress_callback=progress_callback,
-            dc_id=e.new_dc 
+            dc_id=e.new_dc,
+            retry_count=retry_count + 1,
+            max_retries=max_retries
         )
     except (Exception, GeneratorExit) as e:
         # 捕获其他异常或手动停止时，也要清理
