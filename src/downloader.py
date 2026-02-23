@@ -96,16 +96,35 @@ class Downloader:
         
         file_name = client._extract_file_name(message)
         
-        # 检查文件是否已存在 (防止重复下载)
+        # 检查文件是否已存在且下载完成 (防止重复下载)
+        # 需要检查 download_records 中的状态
         if file_name:
             existing_files = list(media_dir.glob("*"))
             existing_names = [f.name for f in existing_files]
             
             if file_name in existing_names:
-                log.debug(f"File already exists: {file_name}")
-                if progress:
-                    progress.update(downloaded=0, skipped=1)
-                return str(media_dir / file_name)
+                # 检查下载记录状态
+                record_status = await self.sqlite_storage.get_download_record_status(
+                    message.id, chat_id, file_name
+                )
+                if record_status == "completed":
+                    log.debug(f"File already downloaded: {file_name}")
+                    if progress:
+                        progress.update(downloaded=0, skipped=1)
+                    return str(media_dir / file_name)
+                # 如果状态是 pending 或 failed，需要重新下载
+        
+        # 开始下载前，先保存记录状态为 pending
+        if file_name:
+            pending_record = DownloadRecord(
+                message_id=message.id,
+                chat_id=chat_id,
+                file_name=file_name,
+                file_path=str(media_dir / file_name) if file_name else "",
+                media_type=client._parse_media_type(message),
+                status="pending"
+            )
+            await self.sqlite_storage.save_download_record(pending_record)
         
         def progress_callback(current: int, total: int):
             """进度回调函数"""
@@ -121,13 +140,14 @@ class Downloader:
             )
             
             if file_path:
-                # 保存下载记录
+                # 下载成功，更新记录状态为 completed
                 record = DownloadRecord(
                     message_id=message.id,
                     chat_id=chat_id,
                     file_name=os.path.basename(file_path),
                     file_path=file_path,
-                    media_type=client._parse_media_type(message)
+                    media_type=client._parse_media_type(message),
+                    status="completed"
                 )
                 await self.sqlite_storage.save_download_record(record)
                 
@@ -137,6 +157,17 @@ class Downloader:
                 return file_path
         except Exception as e:
             log.error(f"Failed to download media for message {message.id}: {e}")
+            # 下载失败，更新记录状态为 failed
+            if file_name:
+                failed_record = DownloadRecord(
+                    message_id=message.id,
+                    chat_id=chat_id,
+                    file_name=file_name,
+                    file_path=str(media_dir / file_name) if file_name else "",
+                    media_type=client._parse_media_type(message),
+                    status="failed"
+                )
+                await self.sqlite_storage.save_download_record(failed_record)
             if progress:
                 progress.update(downloaded=0, skipped=0, error=1)
         
@@ -245,16 +276,155 @@ class Downloader:
         offset_id = 0
         batch_size = 100
         total_processed = 0
+        group_messages_buffer = []  # 用于收集同一 group 的消息
+        
+        def _is_group_message(msg) -> bool:
+            """判断消息是否为 group 消息的一部分"""
+            return hasattr(msg, 'grouped_id') and msg.grouped_id is not None
+        
+        async def _process_single_message(msg) -> bool:
+            """
+            处理单条消息
+            返回 True 表示消息处理完成（下载或跳过），False 表示需要下载
+            """
+            # 增量下载检查: 使用新的状态检查方法
+            if msg.id in existing_ids:
+                # 检查消息是否完全下载完成
+                is_complete = await self.sqlite_storage.is_message_download_complete(msg.id, chat_id)
+                if is_complete:
+                    return True  # 跳过已下载的消息
+            return False
+        
+        async def _process_message_group(messages_batch) -> int:
+            """
+            处理一组消息（包含可能的 group 消息）
+            返回本次处理的消息数量
+            """
+            nonlocal messages_downloaded, media_downloaded, messages_skipped, total_processed, offset_id
+            
+            if not messages_batch:
+                return 0
+            
+            processed_count = 0
+            idx = 0
+            
+            while idx < len(messages_batch):
+                msg = messages_batch[idx]
+                
+                # 检查是否是 group 消息
+                is_group = _is_group_message(msg)
+                
+                if is_group:
+                    # group 消息：需要处理整个 group
+                    group_id = msg.grouped_id
+                    group_msgs = []
+                    
+                    # 收集同一 group 的所有消息
+                    while idx < len(messages_batch) and _is_group_message(messages_batch[idx]) and messages_batch[idx].grouped_id == group_id:
+                        group_msgs.append(messages_batch[idx])
+                        idx += 1
+                    
+                    # 检查 group 中的每条消息是否都已完全下载
+                    group_all_complete = True
+                    for gm in group_msgs:
+                        if gm.id in existing_ids:
+                            # 消息存在于数据库，检查状态
+                            is_complete = await self.sqlite_storage.is_message_download_complete(gm.id, chat_id)
+                            if not is_complete:
+                                group_all_complete = False
+                                break
+                        else:
+                            # 消息不存在于数据库，需要下载
+                            group_all_complete = False
+                            break
+                    
+                    if group_all_complete:
+                        # 整个 group 已完全下载，跳过
+                        messages_skipped += 1
+                        log.debug(f"Skipping group {group_id} (already downloaded)")
+                    else:
+                        # 需要下载这个 group
+                        for gm in group_msgs:
+                            await _download_single_message(gm)
+                        messages_downloaded += 1
+                    
+                    processed_count += len(group_msgs)
+                else:
+                    # 普通消息
+                    need_download = await _process_single_message(msg)
+                    
+                    if need_download:
+                        messages_skipped += 1
+                        log.debug(f"Skipping message {msg.id} (already downloaded)")
+                    else:
+                        await _download_single_message(msg)
+                        messages_downloaded += 1
+                    
+                    processed_count += 1
+                    idx += 1
+                
+                # 更新进度
+                if limit:
+                    # limit 是按整体消息计数
+                    if messages_downloaded + messages_skipped >= limit:
+                        break
+                
+                total_processed += 1
+                if progress_callback:
+                    # 传递更详细的进度信息
+                    # 参数: (total_processed, msg_id, is_group, media_type, is_downloading)
+                    is_group = _is_group_message(msg)
+                    media_type = msg.media_type if hasattr(msg, 'media_type') else ('media' if msg.media else 'text')
+                    progress_callback(total_processed, msg.id, is_group, media_type, msg.media is not None)
+                
+                offset_id = msg.id
+            
+            return processed_count
+        
+        async def _download_single_message(msg):
+            """下载单条消息"""
+            nonlocal media_downloaded, errors
+            
+            # 转换为数据模型
+            msg_model = client.message_to_model(msg, chat_id)
+            
+            # 设置下载状态为 pending
+            msg_model.download_status = "pending"
+            
+            # 下载媒体
+            file_path = None
+            if msg.media and not skip_media:
+                try:
+                    file_path = await self._download_media(client, msg, chat_id, None)
+                    msg_model.file_path = file_path
+                    if file_path:
+                        media_downloaded += 1
+                except Exception as e:
+                    log.error(f"Error downloading media for message {msg.id}: {e}")
+                    errors += 1
+            
+            # 下载完成后，设置状态为 completed
+            msg_model.download_status = "completed"
+            
+            # 保存到存储
+            await self.json_storage.save_message(msg_model)
+            await self.sqlite_storage.save_message(msg_model)
+            
+            # 获取评论 (如果有评论区)
+            api_chat_id = entity_chat_id if entity_chat_id != chat_id else original_chat_input
+            comments_downloaded = await self._download_comments(client, chat_id, msg.id, api_chat_id)
+            comments_count = len(comments_downloaded) if comments_downloaded else 0
+            if comments_count > 0:
+                log.debug(f"Downloaded {comments_count} comments for message {msg.id}")
         
         # 分批获取消息
         while True:
-            # 计算本次请求的数量，不超过剩余限额
+            # 计算本次请求的数量
+            # 注意：这里多获取一些，因为 group 消息可能需要更多
             current_batch_size = batch_size
             if limit:
-                remaining = limit - total_processed
-                if remaining <= 0:
-                    break
-                current_batch_size = min(batch_size, remaining)
+                # 为了处理 group 消息，需要多获取一些
+                current_batch_size = min(batch_size * 2, limit * 2)
             
             # 使用 entity_chat_id (带 -100 前缀) 进行 API 调用
             api_chat_id = entity_chat_id if entity_chat_id != chat_id else original_chat_input
@@ -263,48 +433,15 @@ class Downloader:
             if not messages:
                 break
             
-            for msg in messages:
-                # 增量下载检查: 目录存在 + 数据库记录存在
-                if msg.id in existing_ids:
-                    dir_exists = self._get_message_dir(chat_id, msg.id).exists()
-                    if dir_exists:
-                        messages_skipped += 1
-                        continue
-                
-                # 转换为数据模型
-                msg_model = client.message_to_model(msg, chat_id)
-                
-                # 下载媒体
-                if msg.media and not skip_media:
-                    file_path = await self._download_media(client, msg, chat_id, None)
-                    msg_model.file_path = file_path
-                    if file_path:
-                        media_downloaded += 1
-                
-                # 保存到存储
-                await self.json_storage.save_message(msg_model)
-                await self.sqlite_storage.save_message(msg_model)
-                
-                # 获取评论 (如果有评论区)
-                comments_downloaded = await self._download_comments(client, chat_id, msg.id, api_chat_id)
-                comments_count = len(comments_downloaded) if comments_downloaded else 0
-                if comments_count > 0:
-                    log.debug(f"Downloaded {comments_count} comments for message {msg.id}")
-                
-                messages_downloaded += 1
-                total_processed += 1
-                
-                if progress_callback:
-                    progress_callback(total_processed, msg.id)
-                
-                offset_id = msg.id
+            # 处理这批消息
+            processed = await _process_message_group(messages)
             
-            # 检查是否达到限制
-            if limit and total_processed >= limit:
+            # 检查是否达到限制 (按整体消息计数)
+            if limit and (messages_downloaded + messages_skipped) >= limit:
                 break
             
             # 检查是否已获取全部消息
-            if len(messages) < batch_size:
+            if len(messages) < current_batch_size:
                 break
         
         # 更新聊天元数据

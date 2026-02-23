@@ -59,6 +59,9 @@ class Message:
     is_discussion: bool = False               # 是否有评论区
     discussion_chat_id: Optional[int] = None  # 评论区聊天ID
     
+    # 下载状态
+    download_status: str = "pending"           # 下载状态 (pending/completed/failed)
+    
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         data = asdict(self)
@@ -117,6 +120,7 @@ class DownloadRecord:
     file_path: str                         # 本地路径
     media_type: str                        # 媒体类型
     downloaded_at: datetime = field(default_factory=datetime.now)  # 下载时间
+    status: str = "pending"                # 下载状态 (pending/completed/failed)
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""

@@ -59,9 +59,16 @@ class SQLiteStorage:
                     forwards INTEGER,
                     replies INTEGER,
                     is_discussion INTEGER DEFAULT 0,
-                    discussion_chat_id INTEGER
+                    discussion_chat_id INTEGER,
+                    download_status TEXT DEFAULT 'pending'
                 )
             """)
+            
+            # 尝试添加 download_status 字段（如果表已存在）
+            try:
+                await conn.execute("ALTER TABLE messages ADD COLUMN download_status TEXT DEFAULT 'pending'")
+            except:
+                pass
             # 聊天表
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS chats (
@@ -83,9 +90,16 @@ class SQLiteStorage:
                     file_path TEXT NOT NULL,
                     media_type TEXT NOT NULL,
                     downloaded_at TEXT NOT NULL,
+                    status TEXT DEFAULT 'pending',
                     PRIMARY KEY (chat_id, message_id, file_name)
                 )
             """)
+            
+            # 尝试添加 status 字段（如果表已存在）
+            try:
+                await conn.execute("ALTER TABLE download_records ADD COLUMN status TEXT DEFAULT 'pending'")
+            except:
+                pass
             # 评论表
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS comments (
@@ -129,8 +143,8 @@ class SQLiteStorage:
                 (id, chat_id, date, text, raw_text, media_type, file_name, file_path, group_id,
                  sender_id, sender_name, is_reply, reply_to_msg_id, is_forward,
                  forward_from_chat_id, forward_from_msg_id, forward_from_name,
-                 views, forwards, replies, is_discussion, discussion_chat_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 views, forwards, replies, is_discussion, discussion_chat_id, download_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 message.id,
                 message.chat_id,
@@ -153,7 +167,8 @@ class SQLiteStorage:
                 message.forwards,
                 message.replies if hasattr(message, 'replies') else None,
                 int(message.is_discussion),
-                message.discussion_chat_id
+                message.discussion_chat_id,
+                getattr(message, 'download_status', 'pending')
             ))
             await conn.commit()
         finally:
@@ -256,6 +271,44 @@ class SQLiteStorage:
         finally:
             await conn.close()
     
+    async def is_message_download_complete(self, message_id: int, chat_id: int) -> bool:
+        """
+        检查消息是否完全下载完成
+        返回 True 当且仅当：
+        1. 消息存在于数据库
+        2. download_status = 'completed'
+        """
+        await self.init_db(chat_id)
+        conn = await self._get_connection(chat_id)
+        try:
+            async with conn.execute(
+                "SELECT download_status FROM messages WHERE id = ? AND chat_id = ? LIMIT 1",
+                (message_id, chat_id)
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row is None:
+                    return False
+                status = row["download_status"]
+                return status == "completed"
+        finally:
+            await conn.close()
+    
+    async def get_message_download_status(self, message_id: int, chat_id: int) -> Optional[str]:
+        """获取消息的下载状态"""
+        await self.init_db(chat_id)
+        conn = await self._get_connection(chat_id)
+        try:
+            async with conn.execute(
+                "SELECT download_status FROM messages WHERE id = ? AND chat_id = ? LIMIT 1",
+                (message_id, chat_id)
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    return row["download_status"]
+                return None
+        finally:
+            await conn.close()
+    
     async def get_all_message_ids(self, chat_id: int) -> set:
         """获取所有消息ID集合"""
         await self.init_db(chat_id)
@@ -321,17 +374,34 @@ class SQLiteStorage:
         try:
             await conn.execute("""
                 INSERT OR REPLACE INTO download_records 
-                (message_id, chat_id, file_name, file_path, media_type, downloaded_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (message_id, chat_id, file_name, file_path, media_type, downloaded_at, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
                 record.message_id,
                 record.chat_id,
                 record.file_name,
                 record.file_path,
                 record.media_type,
-                record.downloaded_at.isoformat()
+                record.downloaded_at.isoformat(),
+                getattr(record, 'status', 'pending')
             ))
             await conn.commit()
+        finally:
+            await conn.close()
+    
+    async def get_download_record_status(self, message_id: int, chat_id: int, file_name: str) -> Optional[str]:
+        """获取下载记录的状态"""
+        await self.init_db(chat_id)
+        conn = await self._get_connection(chat_id)
+        try:
+            async with conn.execute(
+                "SELECT status FROM download_records WHERE message_id = ? AND chat_id = ? AND file_name = ?",
+                (message_id, chat_id, file_name)
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    return row["status"]
+                return None
         finally:
             await conn.close()
     

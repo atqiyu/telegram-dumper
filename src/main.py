@@ -67,14 +67,31 @@ async def run_download(args):
                        ncols=80,
                        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
         
-        def progress_callback(current, message_id):
+        def progress_callback(current, message_id, is_group=False, media_type="text", is_downloading=False):
+            """
+            进度回调函数
+            参数:
+                current: 当前处理的消息数
+                message_id: 消息ID
+                is_group: 是否为group消息
+                media_type: 媒体类型
+                is_downloading: 是否正在下载媒体
+            """
+            status_text = ""
+            if is_group:
+                status_text = "[GROUP]"
+            elif is_downloading:
+                status_text = f"[{media_type.upper()}]"
+            else:
+                status_text = "[TEXT]"
+            
             if pbar:
                 if pbar.total == 0:
                     pbar.total = current + 100
                 pbar.update(1)
-                pbar.set_postfix_str(f"ID: {message_id}")
+                pbar.set_postfix_str(f"ID:{message_id} {status_text}")
             elif not args.quiet:
-                print(f"\r  Processed: {current} messages (last ID: {message_id})", end="", flush=True)
+                print(f"\r  [{current}] ID:{message_id} {status_text}", end="", flush=True)
         
         result = await downloader.download_chat(
             client,
