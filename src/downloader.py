@@ -414,11 +414,13 @@ class Downloader:
         # 分批获取消息
         while True:
             # 计算本次请求的数量
-            # 注意：这里多获取一些，因为 group 消息可能需要更多
             current_batch_size = batch_size
             if limit:
-                # 为了处理 group 消息，需要多获取一些
-                current_batch_size = min(batch_size * 2, limit * 2)
+                # 如果还需要更多整体消息，获取更多
+                remaining_whole = limit - (messages_downloaded + messages_skipped)
+                if remaining_whole > 0:
+                    # 每个整体消息可能包含多条消息，多获取一些
+                    current_batch_size = min(batch_size, remaining_whole * 10)
             
             # 使用 entity_chat_id (带 -100 前缀) 进行 API 调用
             api_chat_id = entity_chat_id if entity_chat_id != chat_id else original_chat_input
