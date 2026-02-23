@@ -299,10 +299,9 @@ class ParallelTransferrer:
         if not part_size_kb:
             part_size_kb = 512
         
-        # 限制并发数：默认最少2，最多8，防止过多连接导致不稳定
         if not connection_count:
             connection_count = self._get_connection_count(file_size)
-            connection_count = max(2, min(connection_count, 8))
+            connection_count = max(2, min(connection_count, 20))
         
         part_size = int(part_size_kb * 1024)
         part_count = math.ceil(file_size / part_size)
@@ -404,6 +403,8 @@ async def _internal_transfer_to_telegram(
         return InputFile(file_id, part_count, filename, hash_md5.hexdigest()), file_size
 
 
+DEFAULT_CONNECTION_COUNT = 16
+
 async def download_file(
     client: TelegramClient,
     location: TypeLocation,
@@ -413,6 +414,7 @@ async def download_file(
     dc_id: int = None,
     retry_count: int = 0,
     max_retries: int = 3,
+    connection_count: int = DEFAULT_CONNECTION_COUNT,
 ) -> BinaryIO:
     if file_size is None:
         if hasattr(location, 'size'):
@@ -434,7 +436,7 @@ async def download_file(
             location, 
             file_size, 
             part_size_kb=512, 
-            connection_count=8
+            connection_count=connection_count
         )
         
         async for x in downloaded:
@@ -474,7 +476,8 @@ async def download_file(
             progress_callback=progress_callback,
             dc_id=e.new_dc,
             retry_count=retry_count + 1,
-            max_retries=max_retries
+            max_retries=max_retries,
+            connection_count=connection_count
         )
     except (Exception, GeneratorExit) as e:
         # 捕获其他异常或手动停止时，也要清理

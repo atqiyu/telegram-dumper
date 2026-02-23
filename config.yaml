@@ -2,5 +2,5 @@ api_id: 31016996
 api_hash: "325b4a1cc8e79a661dd9274b6df98aa3"
 session_name: "telegram_dumper"
 output_dir: "output"
-download_concurrency: 8
+download_concurrency: 16
 progress_update_interval: 0.5

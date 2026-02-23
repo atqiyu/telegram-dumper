@@ -12,6 +12,14 @@ from . import FastTelethon
 
 log = logging.getLogger("FastTelethon.Patch")
 
+_default_connection_count = 16
+
+
+def set_connection_count(count: int):
+    """设置默认并发连接数"""
+    global _default_connection_count
+    _default_connection_count = max(2, min(count, 20))
+
 # 保存原始的 _download_file 方法
 original_download_file = TelegramClient._download_file
 
@@ -61,14 +69,14 @@ async def fast_download_file(
         f = file
 
     try:
-        # 使用 FastTelethon 并发下载
         await FastTelethon.download_file(
             self,
             input_location,
             f,
             file_size=file_size,
             progress_callback=progress_callback,
-            dc_id=dc_id
+            dc_id=dc_id,
+            connection_count=_default_connection_count
         )
 
         if callable(getattr(f, 'flush', None)):

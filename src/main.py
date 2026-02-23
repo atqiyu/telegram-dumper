@@ -17,6 +17,7 @@ except ImportError:
 from .config import Config, load_env_config
 from .client import TelegramDumperClient
 from .downloader import Downloader
+from .fast_client import set_connection_count
 
 
 def setup_logging(verbose: bool = False):
@@ -118,6 +119,8 @@ async def run_list_chats(args):
     
     if args.config:
         config = Config.load_from_file(args.config)
+    
+    set_connection_count(config.download_concurrency)
     
     if config.api_id == 0 or not config.api_hash:
         print("Error: API_ID and API_HASH must be set")
